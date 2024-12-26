@@ -7,7 +7,8 @@ import (
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
         "io"
-        "encoding/base64"
+        "path/filepath"
+        "os"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +49,28 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
             return
         }
 
-        mediaType := multipartFileHeader.Header["Content-Type"][0]
-        thumbnailData, err := io.ReadAll(multipartFile)
+    mediaType := multipartFileHeader.Header["Content-Type"][0]
+
+    imageType := ""
+    if mediaType == "image/png" {
+        imageType = "png"
+    } else if mediaType == "image/jpeg" {
+        imageType = "jpeg"
+    } else {
+        respondWithError(w, http.StatusBadRequest, "Invalid File Media Type", err)
+        return
+    }
+
+    thumbnailPath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", videoID.String(), imageType)) 
+    thumbnailURL  := fmt.Sprintf("http://localhost:%s/%s", cfg.port, thumbnailPath)
+    
+    thumbnailFile, err := os.Create(thumbnailPath)
+
+    _, err = io.Copy(thumbnailFile, multipartFile)
+    if err != nil {
+        respondWithError(w, http.StatusInternalServerError, "Error while writing video to disk:", err)
+        return
+    }
 
         thumbnailVideo, err := cfg.db.GetVideo(videoID)
         if err != nil {
@@ -57,9 +78,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
             return
         }
 
-    thumbnailString := base64.StdEncoding.EncodeToString(thumbnailData)
-    thumbnailInfo := fmt.Sprintf("data:%s;base64,%s", mediaType, thumbnailString)
-    thumbnailVideo.ThumbnailURL = &thumbnailInfo
+
+
+    thumbnailVideo.ThumbnailURL = &thumbnailURL
     
     err = cfg.db.UpdateVideo(thumbnailVideo)
     if err != nil {
