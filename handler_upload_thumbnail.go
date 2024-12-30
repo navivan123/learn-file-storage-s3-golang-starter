@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 
+	"crypto/rand"
+	"encoding/base64"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
-        "io"
-        "path/filepath"
-        "os"
+	"io"
+	"os"
+	"path/filepath"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -31,62 +33,68 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	// TODO: implement the upload here
-        const maxMemory = 10 << 20
-        
-        err = r.ParseMultipartForm(maxMemory)
-        if err != nil {
-            respondWithError(w, http.StatusInternalServerError, "Error while parsing form:", err)
-            return
-        }
+	const maxMemory = 10 << 20
 
-        multipartFile, multipartFileHeader, err := r.FormFile("thumbnail")
-        if err != nil {
-            respondWithError(w, http.StatusInternalServerError, "Error while reading form:", err)
-            return
-        }
+	err = r.ParseMultipartForm(maxMemory)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error while parsing form:", err)
+		return
+	}
 
-    mediaType := multipartFileHeader.Header["Content-Type"][0]
+	multipartFile, multipartFileHeader, err := r.FormFile("thumbnail")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error while reading form:", err)
+		return
+	}
+	defer multipartFile.Close()
 
-    imageType := ""
-    if mediaType == "image/png" {
-        imageType = "png"
-    } else if mediaType == "image/jpeg" {
-        imageType = "jpeg"
-    } else {
-        respondWithError(w, http.StatusBadRequest, "Invalid File Media Type", err)
-        return
-    }
+	mediaType := multipartFileHeader.Header["Content-Type"][0]
 
-    thumbnailPath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", videoID.String(), imageType)) 
-    thumbnailURL  := fmt.Sprintf("http://localhost:%s/%s", cfg.port, thumbnailPath)
-    
-    thumbnailFile, err := os.Create(thumbnailPath)
+	imageType := ""
+	if mediaType == "image/png" {
+		imageType = "png"
+	} else if mediaType == "image/jpeg" {
+		imageType = "jpeg"
+	} else {
+		respondWithError(w, http.StatusBadRequest, "Invalid File Media Type", err)
+		return
+	}
 
-    _, err = io.Copy(thumbnailFile, multipartFile)
-    if err != nil {
-        respondWithError(w, http.StatusInternalServerError, "Error while writing video to disk:", err)
-        return
-    }
+	b := make([]byte, 32)
+	_, err = rand.Read(b)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error while getting random bytes", err)
+		return
+	}
+	thumbnailName := base64.RawURLEncoding.EncodeToString(b)
 
-        thumbnailVideo, err := cfg.db.GetVideo(videoID)
-        if err != nil {
-            respondWithError(w, http.StatusNotFound, "Error while fetching video; video not found:", err)
-            return
-        }
+	thumbnailPath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", thumbnailName, imageType))
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/%s", cfg.port, thumbnailPath)
 
+	thumbnailFile, err := os.Create(thumbnailPath)
 
+	_, err = io.Copy(thumbnailFile, multipartFile)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error while writing video to disk:", err)
+		return
+	}
 
-    thumbnailVideo.ThumbnailURL = &thumbnailURL
-    
-    err = cfg.db.UpdateVideo(thumbnailVideo)
-    if err != nil {
-        respondWithError(w, http.StatusInternalServerError, "Error while updating video info to database:", err)
-        return
-    }
+	thumbnailVideo, err := cfg.db.GetVideo(videoID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Error while fetching video; video not found:", err)
+		return
+	}
 
-    respondWithJSON(w, http.StatusOK, thumbnailVideo)
+	thumbnailVideo.ThumbnailURL = &thumbnailURL
+
+	err = cfg.db.UpdateVideo(thumbnailVideo)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error while updating video info to database:", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, thumbnailVideo)
 }
